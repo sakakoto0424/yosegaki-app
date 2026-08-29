@@ -7,3 +7,8 @@ command = "cargo leptos build --release && cargo install -q \"worker-build@^0.8\
 
 [assets]
 directory = "./target/site"
+
+[[d1_databases]]
+binding = "yosegaki_db"
+database_name = "yosegaki-db"
+database_id = "faf44bde-d6f4-4433-9144-b08bfc8b915e"

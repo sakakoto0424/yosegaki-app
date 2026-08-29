@@ -7,6 +7,7 @@ use leptos_router::{
 
 use crate::components::drawing_canvas::DrawingCanvas;
 use crate::components::show_data_from_api::ShowDataFromApi;
+use crate::components::theme_list::ThemeList;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -53,6 +54,7 @@ fn HomePage() -> impl IntoView {
     view! {
         <h1>"Hello world!"</h1>
         <ShowDataFromApi />
+        <ThemeList />
         <DrawingCanvas />
     }
 }
