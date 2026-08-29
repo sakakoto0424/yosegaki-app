@@ -2,30 +2,16 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 // --- 無料枠を守るための上限(リミッター) ---
-const MAX_TEXT_LEN: usize = 500;
-const MAX_IMAGE_BYTES: usize = 500 * 1024; // 500KB
-const MAX_MESSAGES_PER_THEME: i64 = 500;
-
-#[server(SayHello)]
-pub async fn say_hello(num: i32) -> Result<String, ServerFnError> {
-    Ok(format!("Hello from the API!!! I got {num}"))
-}
+const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024; // 3MB(共有キャンバスは書き足すほど大きくなるため)
+const MAX_CONTRIBUTIONS_PER_THEME: i64 = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Theme {
     pub id: i64,
     pub title: String,
     pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Message {
-    pub id: i64,
-    pub theme_id: i64,
-    pub kind: String,
-    pub text_content: Option<String>,
-    pub image_key: Option<String>,
-    pub created_at: String,
+    pub canvas_key: Option<String>,
+    pub contribution_count: i64,
 }
 
 #[cfg(feature = "ssr")]
@@ -54,33 +40,15 @@ async fn bucket() -> Result<worker::Bucket, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
-#[cfg(feature = "ssr")]
-async fn message_count(db: &worker::D1Database, theme_id: i64) -> Result<i64, ServerFnError> {
-    #[derive(Deserialize)]
-    struct Count {
-        cnt: i64,
-    }
-
-    let stmt = db
-        .prepare("SELECT COUNT(*) as cnt FROM messages WHERE theme_id = ?1")
-        .bind(&[(theme_id as f64).into()])
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let result = stmt
-        .all()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let counts: Vec<Count> = result
-        .results()
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    Ok(counts.first().map(|c| c.cnt).unwrap_or(0))
-}
-
 #[cfg_attr(feature = "ssr", worker::send)]
 #[server(ListThemes)]
 pub async fn list_themes() -> Result<Vec<Theme>, ServerFnError> {
     let db = d1().await?;
 
-    let stmt = db.prepare("SELECT id, title, created_at FROM themes ORDER BY created_at DESC");
+    let stmt = db.prepare(
+        "SELECT id, title, created_at, canvas_key, contribution_count \
+         FROM themes ORDER BY created_at DESC",
+    );
     let result = stmt
         .all()
         .await
@@ -94,6 +62,11 @@ pub async fn list_themes() -> Result<Vec<Theme>, ServerFnError> {
 #[cfg_attr(feature = "ssr", worker::send)]
 #[server(CreateTheme)]
 pub async fn create_theme(title: String) -> Result<(), ServerFnError> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err(ServerFnError::new("テーマ名が空です"));
+    }
+
     let db = d1().await?;
 
     let stmt = db
@@ -108,67 +81,14 @@ pub async fn create_theme(title: String) -> Result<(), ServerFnError> {
     Ok(())
 }
 
+/// テーマに書き足す(=共有キャンバスの新しいバージョンを保存する)。
+/// `image_base64` は「今までの絵 + 自分が書き足した分」を1枚に焼き込んだPNG。
 #[cfg_attr(feature = "ssr", worker::send)]
-#[server(ListMessages)]
-pub async fn list_messages(theme_id: i64) -> Result<Vec<Message>, ServerFnError> {
-    let db = d1().await?;
-
-    let stmt = db
-        .prepare(
-            "SELECT id, theme_id, kind, text_content, image_key, created_at \
-             FROM messages WHERE theme_id = ?1 ORDER BY created_at DESC",
-        )
-        .bind(&[(theme_id as f64).into()])
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-    let result = stmt
-        .all()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    result
-        .results::<Message>()
-        .map_err(|e| ServerFnError::new(e.to_string()))
-}
-
-#[cfg_attr(feature = "ssr", worker::send)]
-#[server(PostTextMessage)]
-pub async fn post_text_message(theme_id: i64, text: String) -> Result<(), ServerFnError> {
-    let text = text.trim().to_string();
-    if text.is_empty() {
-        return Err(ServerFnError::new("メッセージが空です"));
-    }
-    if text.chars().count() > MAX_TEXT_LEN {
-        return Err(ServerFnError::new(format!(
-            "メッセージは{MAX_TEXT_LEN}文字までです"
-        )));
-    }
-
-    let db = d1().await?;
-
-    if message_count(&db, theme_id).await? >= MAX_MESSAGES_PER_THEME {
-        return Err(ServerFnError::new(
-            "このテーマは投稿数の上限に達しました。新しいテーマを作成してください",
-        ));
-    }
-
-    let stmt = db
-        .prepare("INSERT INTO messages (theme_id, kind, text_content) VALUES (?1, 'text', ?2)")
-        .bind(&[(theme_id as f64).into(), text.into()])
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    stmt.run()
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
-
-    Ok(())
-}
-
-#[cfg_attr(feature = "ssr", worker::send)]
-#[server(PostDrawingMessage)]
-pub async fn post_drawing_message(
+#[server(SubmitContribution)]
+pub async fn submit_contribution(
     theme_id: i64,
     image_base64: String,
-) -> Result<(), ServerFnError> {
+) -> Result<String, ServerFnError> {
     use base64::Engine;
 
     let bytes = base64::engine::general_purpose::STANDARD
@@ -180,14 +100,31 @@ pub async fn post_drawing_message(
     }
     if bytes.len() > MAX_IMAGE_BYTES {
         return Err(ServerFnError::new(format!(
-            "画像サイズが大きすぎます({}KBまで)",
-            MAX_IMAGE_BYTES / 1024
+            "画像サイズが大きすぎます({}MBまで)",
+            MAX_IMAGE_BYTES / 1024 / 1024
         )));
     }
 
     let db = d1().await?;
 
-    if message_count(&db, theme_id).await? >= MAX_MESSAGES_PER_THEME {
+    #[derive(Deserialize)]
+    struct Count {
+        contribution_count: i64,
+    }
+    let stmt = db
+        .prepare("SELECT contribution_count FROM themes WHERE id = ?1")
+        .bind(&[(theme_id as f64).into()])
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let result = stmt
+        .all()
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let counts: Vec<Count> = result
+        .results()
+        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    let current_count = counts.first().map(|c| c.contribution_count).unwrap_or(0);
+
+    if current_count >= MAX_CONTRIBUTIONS_PER_THEME {
         return Err(ServerFnError::new(
             "このテーマは投稿数の上限に達しました。新しいテーマを作成してください",
         ));
@@ -202,13 +139,16 @@ pub async fn post_drawing_message(
         .map_err(|e| ServerFnError::new(format!("画像の保存に失敗しました: {e}")))?;
 
     let stmt = db
-        .prepare("INSERT INTO messages (theme_id, kind, image_key) VALUES (?1, 'drawing', ?2)")
-        .bind(&[(theme_id as f64).into(), key.into()])
+        .prepare(
+            "UPDATE themes SET canvas_key = ?1, contribution_count = contribution_count + 1 \
+             WHERE id = ?2",
+        )
+        .bind(&[key.clone().into(), (theme_id as f64).into()])
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
     stmt.run()
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?;
 
-    Ok(())
+    Ok(key)
 }

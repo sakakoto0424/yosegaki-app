@@ -1,17 +1,16 @@
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, MetaTags, Stylesheet};
+use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
     StaticSegment,
 };
 
-use crate::components::message_board::MessageBoard;
-use crate::components::theme_list::ThemeList;
+use crate::components::shared_canvas::SharedCanvas;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="ja">
             <head>
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -35,8 +34,8 @@ pub fn App() -> impl IntoView {
         // injects a stylesheet into the document <head>
         // id=leptos means cargo-leptos will hot-reload this stylesheet
         <Stylesheet id="leptos" href="/pkg/yosegaki-app.css"/>
+        <Title text="寄せ書き"/>
 
-        // content for this welcome page
         <Router>
             <main>
                 <Routes fallback=|| "Page not found.".into_view()>
@@ -50,13 +49,13 @@ pub fn App() -> impl IntoView {
 /// Renders the home page of your application.
 #[component]
 fn HomePage() -> impl IntoView {
-    // テーマ一覧の更新通知(ThemeListで作成 → MessageBoardの選択肢にも反映)
-    let themes_version = RwSignal::new(0u32);
-    provide_context(themes_version);
-
     view! {
-        <h1>"寄せ書きアプリ"</h1>
-        <ThemeList />
-        <MessageBoard />
+        <div class="page">
+            <header class="page-header">
+                <h1>"寄せ書き"</h1>
+                <p class="subtitle">"テーマを選んで、みんなで1枚の紙に書き加えよう"</p>
+            </header>
+            <SharedCanvas />
+        </div>
     }
 }
