@@ -5,6 +5,7 @@ use leptos_router::{
     StaticSegment,
 };
 
+use crate::components::drawing_canvas::DrawingCanvas;
 use crate::components::show_data_from_api::ShowDataFromApi;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
@@ -52,5 +53,6 @@ fn HomePage() -> impl IntoView {
     view! {
         <h1>"Hello world!"</h1>
         <ShowDataFromApi />
+        <DrawingCanvas />
     }
 }

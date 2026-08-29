@@ -2333,6 +2333,7 @@ dependencies = [
  "leptos_router",
  "tower-service",
  "wasm-bindgen",
+ "web-sys",
  "worker",
 ]
 
