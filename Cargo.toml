@@ -16,6 +16,7 @@ crate-type = ["cdylib"]
 axum = { version = "0.8", default-features = false, optional = true }
 getrandom = { version = "0.4", features = ["wasm_js"]}
 getrandom03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] }
+js-sys = "0.3"
 leptos = { version = "0.8" }
 leptos_axum = { version = "0.8", default-features = false, features = ["wasm"], optional = true }
 leptos_meta = { version = "0.8" }
@@ -25,7 +26,14 @@ serde = { version = "1", features = ["derive"] }
 tower-service = "0.3"
 uuid = { version = "1", features = ["v4", "rng-getrandom"] }
 wasm-bindgen = "0.2.105"
-web-sys = { version = "0.3", features = ["HtmlCanvasElement", "CanvasRenderingContext2d"] }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+  "HtmlCanvasElement",
+  "CanvasRenderingContext2d",
+  "HtmlImageElement",
+  "HtmlAnchorElement",
+  "TextMetrics",
+] }
 worker = { version = "0.8", features = ["http", "axum", "d1"], optional = true }
 
 [features]

@@ -2,6 +2,7 @@ use leptos::{prelude::*, task::spawn_local};
 use wasm_bindgen::JsCast;
 
 use crate::api::{list_messages, list_themes, post_drawing_message, post_text_message, Message, Theme};
+use crate::components::download::download_yosegaki;
 use crate::components::drawing_canvas::{DrawingCanvas, CANVAS_HEIGHT, CANVAS_WIDTH};
 
 #[component]
@@ -103,6 +104,24 @@ pub fn MessageBoard() -> impl IntoView {
         });
     };
 
+    let on_download = move |_| {
+        let Some(theme_id) = selected_theme.get_untracked() else {
+            return;
+        };
+        let title = themes
+            .get_untracked()
+            .iter()
+            .find(|t| t.id == theme_id)
+            .map(|t| t.title.clone())
+            .unwrap_or_else(|| "yosegaki".to_string());
+        let msgs = messages.get_untracked();
+        spawn_local(async move {
+            if let Err(e) = download_yosegaki(title, msgs).await {
+                set_status.set(e);
+            }
+        });
+    };
+
     view! {
         <div class="message-board">
             <h2>"寄せ書きに参加する"</h2>
@@ -145,6 +164,7 @@ pub fn MessageBoard() -> impl IntoView {
             <p>{move || status.get()}</p>
 
             <h3>"寄せ書き一覧"</h3>
+            <button type="button" on:click=on_download>"この寄せ書きをダウンロード"</button>
             <ul class="message-list">
                 <For
                     each=move || messages.get()
