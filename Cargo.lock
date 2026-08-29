@@ -2052,7 +2052,17 @@ checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "uuid-rng-internal",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "uuid-rng-internal"
+version = "1.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee9ad27c58031a66157ac3b5c93e65068357eeeaceaa658a6163d4e5befb4a06"
+dependencies = [
+ "getrandom 0.4.3",
 ]
 
 [[package]]
@@ -2325,6 +2335,7 @@ name = "yosegaki-app"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "getrandom 0.3.4",
  "getrandom 0.4.3",
  "leptos",
@@ -2333,6 +2344,7 @@ dependencies = [
  "leptos_router",
  "serde",
  "tower-service",
+ "uuid",
  "wasm-bindgen",
  "web-sys",
  "worker",

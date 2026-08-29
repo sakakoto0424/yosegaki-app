@@ -12,3 +12,7 @@ directory = "./target/site"
 binding = "yosegaki_db"
 database_name = "yosegaki-db"
 database_id = "faf44bde-d6f4-4433-9144-b08bfc8b915e"
+
+[[r2_buckets]]
+bucket_name = "yosegaki-images"
+binding = "yosegaki_images"

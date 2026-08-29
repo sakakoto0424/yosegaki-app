@@ -2,14 +2,14 @@ use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{CanvasRenderingContext2d, PointerEvent};
 
-const CANVAS_WIDTH: u32 = 600;
-const CANVAS_HEIGHT: u32 = 400;
+pub const CANVAS_WIDTH: u32 = 600;
+pub const CANVAS_HEIGHT: u32 = 400;
 
 /// 指・マウス・タッチペンで自由に線を描けるキャンバス。
 /// Pointer Events を使うことで、iPad の指操作もそのまま扱える。
+/// `canvas_ref` は親コンポーネントが所有し、投稿時に画像を取り出すのに使う。
 #[component]
-pub fn DrawingCanvas() -> impl IntoView {
-    let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
+pub fn DrawingCanvas(canvas_ref: NodeRef<leptos::html::Canvas>) -> impl IntoView {
     let is_drawing = StoredValue::new(false);
 
     let get_ctx = move || -> Option<CanvasRenderingContext2d> {
