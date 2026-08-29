@@ -12,6 +12,32 @@ pub const CANVAS_HEIGHT: u32 = 1350;
 const VIEWPORT_WIDTH: u32 = 640;
 const VIEWPORT_HEIGHT: u32 = 480;
 const PAN_STEP: i32 = 240;
+/// 表示枠を回転できる角度(実物の色紙を回すように、90度刻みで切り替える)
+const ROTATIONS: [i32; 4] = [0, 90, 180, 270];
+
+/// 表示枠が`rotation_deg`だけ回転している時、表示枠内の相対位置(rel_x, rel_y)を
+/// 回転前(0度)の表示枠ローカル座標に変換する。
+fn unrotate_point(rel_x: f64, rel_y: f64, rotation_deg: i32) -> (f64, f64) {
+    let w = VIEWPORT_WIDTH as f64;
+    let h = VIEWPORT_HEIGHT as f64;
+    match rotation_deg.rem_euclid(360) {
+        90 => (rel_y, h - rel_x),
+        180 => (w - rel_x, h - rel_y),
+        270 => (w - rel_y, rel_x),
+        _ => (rel_x, rel_y),
+    }
+}
+
+/// 表示枠が`rotation_deg`だけ回転している時、見た目上の移動方向(dx, dy)を
+/// 回転前(0度)のスクロール方向に変換する。
+fn unrotate_vector(dx: i32, dy: i32, rotation_deg: i32) -> (i32, i32) {
+    match rotation_deg.rem_euclid(360) {
+        90 => (dy, -dx),
+        180 => (-dx, -dy),
+        270 => (-dy, dx),
+        _ => (dx, dy),
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
@@ -172,6 +198,7 @@ pub fn SharedCanvas() -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     let scroll_ref = NodeRef::<leptos::html::Div>::new();
     let is_drawing = StoredValue::new(false);
+    let (rotation, set_rotation) = signal(0i32);
 
     let refresh_themes = move || {
         spawn_local(async move {
@@ -246,9 +273,22 @@ pub fn SharedCanvas() -> impl IntoView {
 
     let get_ctx = move || -> Option<CanvasRenderingContext2d> { get_2d_context(&canvas_ref.get()?) };
 
+    // 表示枠の回転・スクロールを考慮して、ポインター位置をキャンバス上の実座標に変換する
+    let pointer_to_canvas = move |ev: &PointerEvent| -> Option<(f64, f64)> {
+        let el = scroll_ref.get_untracked()?;
+        let rect = el.get_bounding_client_rect();
+        let rel_x = ev.client_x() as f64 - rect.left();
+        let rel_y = ev.client_y() as f64 - rect.top();
+        let (ux, uy) = unrotate_point(rel_x, rel_y, rotation.get_untracked());
+        Some((ux + el.scroll_left() as f64, uy + el.scroll_top() as f64))
+    };
+
     let on_pointer_down = move |ev: PointerEvent| {
+        let Some((x, y)) = pointer_to_canvas(&ev) else {
+            return;
+        };
         if tool.get_untracked() == Tool::Text {
-            set_pending_text_pos.set(Some((ev.offset_x() as f64, ev.offset_y() as f64)));
+            set_pending_text_pos.set(Some((x, y)));
             return;
         }
         ev.prevent_default();
@@ -257,7 +297,7 @@ pub fn SharedCanvas() -> impl IntoView {
         }
         if let Some(ctx) = get_ctx() {
             ctx.begin_path();
-            ctx.move_to(ev.offset_x() as f64, ev.offset_y() as f64);
+            ctx.move_to(x, y);
         }
         is_drawing.set_value(true);
     };
@@ -267,8 +307,11 @@ pub fn SharedCanvas() -> impl IntoView {
             return;
         }
         ev.prevent_default();
+        let Some((x, y)) = pointer_to_canvas(&ev) else {
+            return;
+        };
         if let Some(ctx) = get_ctx() {
-            ctx.line_to(ev.offset_x() as f64, ev.offset_y() as f64);
+            ctx.line_to(x, y);
             ctx.set_line_width(4.0);
             ctx.set_line_cap("round");
             ctx.set_line_join("round");
@@ -345,12 +388,20 @@ pub fn SharedCanvas() -> impl IntoView {
     };
 
     let pan = move |dx: i32, dy: i32| {
+        let (dx, dy) = unrotate_vector(dx, dy, rotation.get_untracked());
         if let Some(el) = scroll_ref.get_untracked() {
             let left = el.scroll_left();
             let top = el.scroll_top();
             el.set_scroll_left(left + dx);
             el.set_scroll_top(top + dy);
         }
+    };
+
+    let on_rotate = move |_| {
+        let current = rotation.get_untracked();
+        let idx = ROTATIONS.iter().position(|&r| r == current).unwrap_or(0);
+        let next = ROTATIONS[(idx + 1) % ROTATIONS.len()];
+        set_rotation.set(next);
     };
 
     let on_download = move |_| {
@@ -422,7 +473,7 @@ pub fn SharedCanvas() -> impl IntoView {
                 >"文字を置く"</button>
             </div>
 
-            <p class="canvas-hint">"広いキャンバスの一部だけが表示されています。矢印ボタンで移動できます。"</p>
+            <p class="canvas-hint">"広いキャンバスの一部だけが表示されています。矢印ボタンで移動、回転ボタンで向きを変えられます。"</p>
 
             <div class="canvas-nav">
                 <button type="button" class="nav-btn" on:click=move |_| pan(0, -PAN_STEP)>"↑"</button>
@@ -431,42 +482,48 @@ pub fn SharedCanvas() -> impl IntoView {
                     <button type="button" class="nav-btn" on:click=move |_| pan(PAN_STEP, 0)>"→"</button>
                 </div>
                 <button type="button" class="nav-btn" on:click=move |_| pan(0, PAN_STEP)>"↓"</button>
+                <button type="button" class="nav-btn rotate-btn" on:click=on_rotate title="画面を回転">"⟳"</button>
             </div>
 
-            <div class="canvas-viewport" node_ref=scroll_ref
-                style=format!("width: {VIEWPORT_WIDTH}px; max-width: 100%; height: {VIEWPORT_HEIGHT}px;")
-            >
-                <div style="position: relative;">
-                    <canvas
-                        node_ref=canvas_ref
-                        width=CANVAS_WIDTH
-                        height=CANVAS_HEIGHT
-                        style="touch-action: none; display: block;"
-                        on:pointerdown=on_pointer_down
-                        on:pointermove=on_pointer_move
-                        on:pointerup=on_pointer_up
-                        on:pointerleave=on_pointer_leave
-                    ></canvas>
+            <div class="canvas-rotate-wrapper">
+                <div class="canvas-viewport" node_ref=scroll_ref
+                    style=move || format!(
+                        "width: {VIEWPORT_WIDTH}px; height: {VIEWPORT_HEIGHT}px; transform: rotate({}deg);",
+                        rotation.get()
+                    )
+                >
+                    <div style="position: relative;">
+                        <canvas
+                            node_ref=canvas_ref
+                            width=CANVAS_WIDTH
+                            height=CANVAS_HEIGHT
+                            style="touch-action: none; display: block;"
+                            on:pointerdown=on_pointer_down
+                            on:pointermove=on_pointer_move
+                            on:pointerup=on_pointer_up
+                            on:pointerleave=on_pointer_leave
+                        ></canvas>
 
-                    <Show when=move || pending_text_pos.get().is_some()>
-                        {move || {
-                            let (x, y) = pending_text_pos.get().unwrap_or((0.0, 0.0));
-                            view! {
-                                <div
-                                    class="text-popup"
-                                    style=format!("left: {x}px; top: {y}px;")
-                                >
-                                    <input
-                                        type="text"
-                                        prop:value=move || text_draft.get()
-                                        on:input=move |ev| set_text_draft.set(event_target_value(&ev))
-                                    />
-                                    <button type="button" on:click=on_place_text>"配置"</button>
-                                    <button type="button" on:click=on_cancel_text>"やめる"</button>
-                                </div>
-                            }
-                        }}
-                    </Show>
+                        <Show when=move || pending_text_pos.get().is_some()>
+                            {move || {
+                                let (x, y) = pending_text_pos.get().unwrap_or((0.0, 0.0));
+                                view! {
+                                    <div
+                                        class="text-popup"
+                                        style=format!("left: {x}px; top: {y}px;")
+                                    >
+                                        <input
+                                            type="text"
+                                            prop:value=move || text_draft.get()
+                                            on:input=move |ev| set_text_draft.set(event_target_value(&ev))
+                                        />
+                                        <button type="button" on:click=on_place_text>"配置"</button>
+                                        <button type="button" on:click=on_cancel_text>"やめる"</button>
+                                    </div>
+                                }
+                            }}
+                        </Show>
+                    </div>
                 </div>
             </div>
 

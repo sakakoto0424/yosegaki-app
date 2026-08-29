@@ -1,6 +1,7 @@
 target
 node_modules
 build
+.DS_Store
 
 ### Wrangler ###
 .wrangler/
