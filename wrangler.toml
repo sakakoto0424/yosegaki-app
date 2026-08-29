@@ -1,0 +1,9 @@
+name = "yosegaki-app"
+main = "build/index.js"
+compatibility_date = "2026-08-29"
+
+[build]
+command = "cargo leptos build --release && cargo install -q \"worker-build@^0.8\" && LEPTOS_OUTPUT_NAME=yosegaki-app worker-build --release --features ssr"
+
+[assets]
+directory = "./target/site"
