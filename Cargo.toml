@@ -32,6 +32,9 @@ web-sys = { version = "0.3", features = [
   "CanvasRenderingContext2d",
   "HtmlImageElement",
   "HtmlAnchorElement",
+  "HtmlDivElement",
+  "Element",
+  "ImageData",
   "TextMetrics",
 ] }
 worker = { version = "0.8", features = ["http", "axum", "d1"], optional = true }

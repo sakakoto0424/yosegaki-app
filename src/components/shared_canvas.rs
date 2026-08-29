@@ -5,8 +5,13 @@ use web_sys::{CanvasRenderingContext2d, PointerEvent};
 
 use crate::api::{create_theme, list_themes, submit_contribution, Theme};
 
-pub const CANVAS_WIDTH: u32 = 640;
-pub const CANVAS_HEIGHT: u32 = 480;
+/// 共有キャンバスの実サイズ(=保存される画像のサイズ)。書ける面積を広くとる。
+pub const CANVAS_WIDTH: u32 = 1800;
+pub const CANVAS_HEIGHT: u32 = 1350;
+/// 画面に一度に見える範囲(スクロールして移動する)
+const VIEWPORT_WIDTH: u32 = 640;
+const VIEWPORT_HEIGHT: u32 = 480;
+const PAN_STEP: i32 = 240;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tool {
@@ -37,7 +42,123 @@ fn get_2d_context(canvas: &web_sys::HtmlCanvasElement) -> Option<CanvasRendering
     canvas.get_context("2d").ok()??.dyn_into().ok()
 }
 
-/// 1つのテーマ = 1枚の共有キャンバス。
+fn new_canvas(
+    document: &web_sys::Document,
+    width: u32,
+    height: u32,
+) -> Result<(web_sys::HtmlCanvasElement, CanvasRenderingContext2d), String> {
+    let canvas: web_sys::HtmlCanvasElement = document
+        .create_element("canvas")
+        .map_err(|_| "canvas作成に失敗しました".to_string())?
+        .dyn_into()
+        .map_err(|_| "canvas変換に失敗しました".to_string())?;
+    canvas.set_width(width);
+    canvas.set_height(height);
+    let ctx = get_2d_context(&canvas).ok_or("描画コンテキストの取得に失敗しました".to_string())?;
+    Ok((canvas, ctx))
+}
+
+/// 実際に何か描かれている範囲(余白を除いた矩形)を検出する。
+fn find_ink_bbox(ctx: &CanvasRenderingContext2d, width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
+    let data = ctx
+        .get_image_data(0.0, 0.0, width as f64, height as f64)
+        .ok()?
+        .data()
+        .0;
+
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0u32;
+    let mut max_y = 0u32;
+    let mut found = false;
+
+    for y in 0..height {
+        let row = (y * width) as usize;
+        for x in 0..width {
+            let idx = (row + x as usize) * 4;
+            let a = data[idx + 3];
+            let r = data[idx];
+            let g = data[idx + 1];
+            let b = data[idx + 2];
+            let is_blank = a == 0 || (r > 250 && g > 250 && b > 250);
+            if !is_blank {
+                found = true;
+                if x < min_x {
+                    min_x = x;
+                }
+                if x > max_x {
+                    max_x = x;
+                }
+                if y < min_y {
+                    min_y = y;
+                }
+                if y > max_y {
+                    max_y = y;
+                }
+            }
+        }
+    }
+
+    found.then_some((min_x, min_y, max_x, max_y))
+}
+
+/// 現在の共有キャンバス画像を読み込み、書き込みがある範囲だけを切り出してダウンロードさせる。
+async fn download_cropped(canvas_key: String, theme_title: String) -> Result<(), String> {
+    let window = web_sys::window().ok_or("windowが取得できません")?;
+    let document = window.document().ok_or("documentが取得できません")?;
+
+    let img = load_image(format!("/img/{canvas_key}"))
+        .await
+        .map_err(|_| "画像の読み込みに失敗しました".to_string())?;
+
+    let (_full_canvas, full_ctx) = new_canvas(&document, CANVAS_WIDTH, CANVAS_HEIGHT)?;
+    full_ctx.set_fill_style_str("#ffffff");
+    full_ctx.fill_rect(0.0, 0.0, CANVAS_WIDTH as f64, CANVAS_HEIGHT as f64);
+    let _ = full_ctx.draw_image_with_html_image_element(&img, 0.0, 0.0);
+
+    let padding: i64 = 24;
+    let (min_x, min_y, max_x, max_y) =
+        find_ink_bbox(&full_ctx, CANVAS_WIDTH, CANVAS_HEIGHT).unwrap_or((0, 0, 200, 200));
+
+    let crop_x = (min_x as i64 - padding).max(0) as u32;
+    let crop_y = (min_y as i64 - padding).max(0) as u32;
+    let crop_w = (((max_x as i64 - crop_x as i64) + padding + 1).min(CANVAS_WIDTH as i64 - crop_x as i64)).max(1) as u32;
+    let crop_h = (((max_y as i64 - crop_y as i64) + padding + 1).min(CANVAS_HEIGHT as i64 - crop_y as i64)).max(1) as u32;
+
+    let (out_canvas, out_ctx) = new_canvas(&document, crop_w, crop_h)?;
+    out_ctx.set_fill_style_str("#ffffff");
+    out_ctx.fill_rect(0.0, 0.0, crop_w as f64, crop_h as f64);
+    out_ctx
+        .draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+            &img,
+            crop_x as f64,
+            crop_y as f64,
+            crop_w as f64,
+            crop_h as f64,
+            0.0,
+            0.0,
+            crop_w as f64,
+            crop_h as f64,
+        )
+        .map_err(|_| "画像の切り出しに失敗しました".to_string())?;
+
+    let data_url = out_canvas
+        .to_data_url()
+        .map_err(|_| "画像の書き出しに失敗しました".to_string())?;
+
+    let a: web_sys::HtmlAnchorElement = document
+        .create_element("a")
+        .map_err(|_| "ダウンロードリンクの作成に失敗しました".to_string())?
+        .dyn_into()
+        .map_err(|_| "ダウンロードリンクの作成に失敗しました".to_string())?;
+    a.set_href(&data_url);
+    a.set_download(&format!("{theme_title}.png"));
+    a.click();
+
+    Ok(())
+}
+
+/// 1つのテーマ = 1枚の共有キャンバス(実寸1800x1350、画面には一部だけ表示してスクロールする)。
 /// みんなが「今までの状態」の上に直接書き足していく、本物の寄せ書きに近い体験。
 #[component]
 pub fn SharedCanvas() -> impl IntoView {
@@ -49,6 +170,7 @@ pub fn SharedCanvas() -> impl IntoView {
     let (pending_text_pos, set_pending_text_pos) = signal::<Option<(f64, f64)>>(None);
     let (text_draft, set_text_draft) = signal(String::new());
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
+    let scroll_ref = NodeRef::<leptos::html::Div>::new();
     let is_drawing = StoredValue::new(false);
 
     let refresh_themes = move || {
@@ -115,9 +237,7 @@ pub fn SharedCanvas() -> impl IntoView {
         });
     };
 
-    let get_ctx = move || -> Option<CanvasRenderingContext2d> {
-        get_2d_context(&canvas_ref.get()?)
-    };
+    let get_ctx = move || -> Option<CanvasRenderingContext2d> { get_2d_context(&canvas_ref.get()?) };
 
     let on_pointer_down = move |ev: PointerEvent| {
         if tool.get_untracked() == Tool::Text {
@@ -210,16 +330,39 @@ pub fn SharedCanvas() -> impl IntoView {
         });
     };
 
-    let selected_canvas_key = move || {
-        selected_theme
-            .get()
-            .and_then(|id| themes.get().iter().find(|t| t.id == id).and_then(|t| t.canvas_key.clone()))
+    let pan = move |dx: i32, dy: i32| {
+        if let Some(el) = scroll_ref.get_untracked() {
+            let left = el.scroll_left();
+            let top = el.scroll_top();
+            el.set_scroll_left(left + dx);
+            el.set_scroll_top(top + dy);
+        }
     };
-    let selected_title = move || {
+
+    let on_download = move |_| {
+        let Some(theme_id) = selected_theme.get_untracked() else {
+            return;
+        };
+        let theme = themes.get_untracked().into_iter().find(|t| t.id == theme_id);
+        let Some(theme) = theme else {
+            return;
+        };
+        let Some(key) = theme.canvas_key else {
+            set_status.set("まだ何も書かれていません".to_string());
+            return;
+        };
+        spawn_local(async move {
+            if let Err(e) = download_cropped(key, theme.title).await {
+                set_status.set(e);
+            }
+        });
+    };
+
+    let has_canvas = move || {
         selected_theme
             .get()
-            .and_then(|id| themes.get().iter().find(|t| t.id == id).map(|t| t.title.clone()))
-            .unwrap_or_else(|| "yosegaki".to_string())
+            .and_then(|id| themes.get().iter().find(|t| t.id == id).map(|t| t.canvas_key.is_some()))
+            .unwrap_or(false)
     };
 
     view! {
@@ -265,45 +408,58 @@ pub fn SharedCanvas() -> impl IntoView {
                 >"文字を置く"</button>
             </div>
 
-            <div style="position: relative; display: inline-block;">
-                <canvas
-                    node_ref=canvas_ref
-                    width=CANVAS_WIDTH
-                    height=CANVAS_HEIGHT
-                    style="touch-action: none; border: 1px solid #999; max-width: 100%; display: block;"
-                    on:pointerdown=on_pointer_down
-                    on:pointermove=on_pointer_move
-                    on:pointerup=on_pointer_up
-                    on:pointerleave=on_pointer_leave
-                ></canvas>
+            <p class="canvas-hint">"広いキャンバスの一部だけが表示されています。矢印ボタンで移動できます。"</p>
 
-                <Show when=move || pending_text_pos.get().is_some()>
-                    {move || {
-                        let (x, y) = pending_text_pos.get().unwrap_or((0.0, 0.0));
-                        view! {
-                            <div style=format!(
-                                "position: absolute; left: {x}px; top: {y}px; background: white; border: 1px solid #999; padding: 4px;"
-                            )>
-                                <input
-                                    type="text"
-                                    prop:value=move || text_draft.get()
-                                    on:input=move |ev| set_text_draft.set(event_target_value(&ev))
-                                />
-                                <button type="button" on:click=on_place_text>"配置"</button>
-                                <button type="button" on:click=on_cancel_text>"やめる"</button>
-                            </div>
-                        }
-                    }}
-                </Show>
+            <div class="canvas-nav">
+                <button type="button" class="nav-btn" on:click=move |_| pan(0, -PAN_STEP)>"↑"</button>
+                <div class="canvas-nav-row">
+                    <button type="button" class="nav-btn" on:click=move |_| pan(-PAN_STEP, 0)>"←"</button>
+                    <button type="button" class="nav-btn" on:click=move |_| pan(PAN_STEP, 0)>"→"</button>
+                </div>
+                <button type="button" class="nav-btn" on:click=move |_| pan(0, PAN_STEP)>"↓"</button>
+            </div>
+
+            <div class="canvas-viewport" node_ref=scroll_ref
+                style=format!("width: {VIEWPORT_WIDTH}px; max-width: 100%; height: {VIEWPORT_HEIGHT}px;")
+            >
+                <div style="position: relative;">
+                    <canvas
+                        node_ref=canvas_ref
+                        width=CANVAS_WIDTH
+                        height=CANVAS_HEIGHT
+                        style="touch-action: none; display: block;"
+                        on:pointerdown=on_pointer_down
+                        on:pointermove=on_pointer_move
+                        on:pointerup=on_pointer_up
+                        on:pointerleave=on_pointer_leave
+                    ></canvas>
+
+                    <Show when=move || pending_text_pos.get().is_some()>
+                        {move || {
+                            let (x, y) = pending_text_pos.get().unwrap_or((0.0, 0.0));
+                            view! {
+                                <div
+                                    class="text-popup"
+                                    style=format!("left: {x}px; top: {y}px;")
+                                >
+                                    <input
+                                        type="text"
+                                        prop:value=move || text_draft.get()
+                                        on:input=move |ev| set_text_draft.set(event_target_value(&ev))
+                                    />
+                                    <button type="button" on:click=on_place_text>"配置"</button>
+                                    <button type="button" on:click=on_cancel_text>"やめる"</button>
+                                </div>
+                            }
+                        }}
+                    </Show>
+                </div>
             </div>
 
             <div>
                 <button type="button" on:click=on_save>"書き加えて保存"</button>
-                <Show when=move || selected_canvas_key().is_some()>
-                    <a
-                        href=move || format!("/img/{}", selected_canvas_key().unwrap_or_default())
-                        download=move || format!("{}.png", selected_title())
-                    >"この寄せ書きをダウンロード"</a>
+                <Show when=has_canvas>
+                    <button type="button" on:click=on_download>"この寄せ書きをダウンロード"</button>
                 </Show>
             </div>
 

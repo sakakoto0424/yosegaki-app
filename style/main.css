@@ -154,11 +154,9 @@ a:hover {
 }
 
 canvas {
-  border-radius: 10px;
-  border: 1px solid var(--color-border) !important;
-  box-shadow: var(--shadow);
   touch-action: none;
   cursor: crosshair;
+  background: #ffffff;
 }
 
 .shared-canvas p {
@@ -166,6 +164,61 @@ canvas {
   min-height: 1.2em;
   color: var(--color-accent-hover);
   font-size: 0.9rem;
+}
+
+.canvas-hint {
+  color: var(--color-text-muted) !important;
+  font-size: 0.85rem !important;
+}
+
+.canvas-nav {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.canvas-nav-row {
+  display: flex;
+  gap: 60px;
+}
+
+.nav-btn {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 10px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.canvas-viewport {
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  background: #fafafa;
+  -webkit-overflow-scrolling: touch;
+}
+
+.text-popup {
+  position: absolute;
+  background: var(--color-surface);
+  border: 1px solid var(--color-accent);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  gap: 6px;
+  box-shadow: var(--shadow);
+  z-index: 10;
+}
+
+.text-popup input {
+  padding: 6px 10px;
+}
+
+.text-popup button {
+  padding: 6px 12px;
 }
 
 @media (max-width: 640px) {
