@@ -193,17 +193,17 @@ pub fn SharedCanvas() -> impl IntoView {
         refresh_themes();
     });
 
-    // テーマ切り替え・テーマ一覧更新のたびに、共有キャンバスの「今の状態」を読み込み直す
-    Effect::new(move |_| {
-        let theme_id = selected_theme.get();
+    // 選択中テーマの「最後に保存された状態」をキャンバスに読み込み直す(未保存の書き込みは破棄される)
+    let reload_canvas = move || {
+        let theme_id = selected_theme.get_untracked();
         let canvas_key = theme_id.and_then(|id| {
             themes
-                .get()
+                .get_untracked()
                 .iter()
                 .find(|t| t.id == id)
                 .and_then(|t| t.canvas_key.clone())
         });
-        let Some(canvas) = canvas_ref.get() else {
+        let Some(canvas) = canvas_ref.get_untracked() else {
             return;
         };
         spawn_local(async move {
@@ -218,6 +218,13 @@ pub fn SharedCanvas() -> impl IntoView {
                 }
             }
         });
+    };
+
+    // テーマ切り替え・テーマ一覧更新のたびに読み込み直す
+    Effect::new(move |_| {
+        let _ = selected_theme.get();
+        let _ = themes.get();
+        reload_canvas();
     });
 
     let on_create_theme = move |_| {
@@ -297,6 +304,13 @@ pub fn SharedCanvas() -> impl IntoView {
     let on_cancel_text = move |_| {
         set_pending_text_pos.set(None);
         set_text_draft.set(String::new());
+    };
+
+    let on_undo = move |_| {
+        set_pending_text_pos.set(None);
+        set_text_draft.set(String::new());
+        reload_canvas();
+        set_status.set("書き途中の内容を取り消しました".to_string());
     };
 
     let on_save = move |_| {
@@ -458,6 +472,7 @@ pub fn SharedCanvas() -> impl IntoView {
 
             <div>
                 <button type="button" on:click=on_save>"書き加えて保存"</button>
+                <button type="button" on:click=on_undo>"やり直す"</button>
                 <Show when=has_canvas>
                     <button type="button" on:click=on_download>"この寄せ書きをダウンロード"</button>
                 </Show>
