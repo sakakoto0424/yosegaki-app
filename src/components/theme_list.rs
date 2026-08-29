@@ -7,19 +7,18 @@ pub fn ThemeList() -> impl IntoView {
     let (themes, set_themes) = signal(Vec::<Theme>::new());
     let (new_title, set_new_title) = signal(String::new());
     let (status, set_status) = signal(String::new());
+    let themes_version =
+        use_context::<RwSignal<u32>>().expect("themes_version context should be provided");
 
-    let refresh = move || {
+    // 初回表示、および他コンポーネントでのテーマ作成時にも一覧を再取得
+    Effect::new(move |_| {
+        let _ = themes_version.get();
         spawn_local(async move {
             match list_themes().await {
                 Ok(list) => set_themes.set(list),
                 Err(e) => set_status.set(format!("読み込みに失敗しました: {e}")),
             }
         });
-    };
-
-    // 初回表示時に一覧を取得
-    Effect::new(move |_| {
-        refresh();
     });
 
     let on_submit = move |_| {
@@ -32,7 +31,7 @@ pub fn ThemeList() -> impl IntoView {
                 Ok(()) => {
                     set_new_title.set(String::new());
                     set_status.set(String::new());
-                    refresh();
+                    themes_version.update(|v| *v += 1);
                 }
                 Err(e) => set_status.set(format!("作成に失敗しました: {e}")),
             }

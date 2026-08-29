@@ -14,6 +14,8 @@ pub fn MessageBoard() -> impl IntoView {
     let (text_input, set_text_input) = signal(String::new());
     let (status, set_status) = signal(String::new());
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
+    let themes_version =
+        use_context::<RwSignal<u32>>().expect("themes_version context should be provided");
 
     let refresh_themes = move || {
         spawn_local(async move {
@@ -42,6 +44,7 @@ pub fn MessageBoard() -> impl IntoView {
     };
 
     Effect::new(move |_| {
+        let _ = themes_version.get();
         refresh_themes();
     });
 

@@ -50,6 +50,10 @@ pub fn App() -> impl IntoView {
 /// Renders the home page of your application.
 #[component]
 fn HomePage() -> impl IntoView {
+    // テーマ一覧の更新通知(ThemeListで作成 → MessageBoardの選択肢にも反映)
+    let themes_version = RwSignal::new(0u32);
+    provide_context(themes_version);
+
     view! {
         <h1>"寄せ書きアプリ"</h1>
         <ThemeList />
