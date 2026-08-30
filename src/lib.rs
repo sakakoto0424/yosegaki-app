@@ -29,8 +29,15 @@ async fn serve_image(
     }
     .await;
 
+    // 以前はPNGで保存していたため、キーの拡張子から判定して互換性を保つ
+    let content_type = if key.ends_with(".png") {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+
     match result {
-        Ok(Some(bytes)) => (StatusCode::OK, [("content-type", "image/png")], bytes).into_response(),
+        Ok(Some(bytes)) => (StatusCode::OK, [("content-type", content_type)], bytes).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "not found").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("{e}")).into_response(),
     }

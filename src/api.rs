@@ -130,7 +130,7 @@ pub async fn submit_contribution(
         ));
     }
 
-    let key = format!("{}.png", uuid::Uuid::new_v4());
+    let key = format!("{}.jpg", uuid::Uuid::new_v4());
 
     let b = bucket().await?;
     b.put(key.clone(), bytes)

@@ -182,8 +182,9 @@ async fn download_cropped(canvas_key: String, theme_title: String) -> Result<(),
         )
         .map_err(|_| "画像の切り出しに失敗しました".to_string())?;
 
+    let quality = JsValue::from_f64(0.92);
     let data_url = out_canvas
-        .to_data_url()
+        .to_data_url_with_type_and_encoder_options("image/jpeg", &quality)
         .map_err(|_| "画像の書き出しに失敗しました".to_string())?;
 
     let a: web_sys::HtmlAnchorElement = document
@@ -192,7 +193,7 @@ async fn download_cropped(canvas_key: String, theme_title: String) -> Result<(),
         .dyn_into()
         .map_err(|_| "ダウンロードリンクの作成に失敗しました".to_string())?;
     a.set_href(&data_url);
-    a.set_download(&format!("{theme_title}.png"));
+    a.set_download(&format!("{theme_title}.jpg"));
     a.click();
 
     Ok(())
@@ -368,7 +369,8 @@ pub fn SharedCanvas() -> impl IntoView {
         is_dragging_photo.set_value(false);
     };
 
-    let on_place_text = move |_| {
+    // 配置中の文字をキャンバスに焼き込む(「配置」ボタンからも、保存時の自動反映からも呼ばれる)
+    let bake_pending_text = move || {
         let Some((x, y)) = pending_text_pos.get_untracked() else {
             return;
         };
@@ -383,6 +385,8 @@ pub fn SharedCanvas() -> impl IntoView {
         set_pending_text_pos.set(None);
         set_text_draft.set(String::new());
     };
+
+    let on_place_text = move |_| bake_pending_text();
 
     let on_cancel_text = move |_| {
         set_pending_text_pos.set(None);
@@ -446,7 +450,8 @@ pub fn SharedCanvas() -> impl IntoView {
         });
     };
 
-    let on_place_photo = move |_| {
+    // 配置中の写真をキャンバスに焼き込む(「配置」ボタンからも、保存時の自動反映からも呼ばれる)
+    let bake_pending_photo = move || {
         let Some((x, y)) = pending_photo_pos.get_untracked() else {
             return;
         };
@@ -469,6 +474,8 @@ pub fn SharedCanvas() -> impl IntoView {
         clear_pending_photo();
     };
 
+    let on_place_photo = move |_| bake_pending_photo();
+
     let on_cancel_photo = move |_| {
         clear_pending_photo();
     };
@@ -486,10 +493,17 @@ pub fn SharedCanvas() -> impl IntoView {
             set_status.set("テーマを選んでください".to_string());
             return;
         };
+        // 「配置」を押し忘れている書き途中の写真・文字があれば、保存前に反映しておく
+        bake_pending_photo();
+        bake_pending_text();
         let Some(canvas) = canvas_ref.get_untracked() else {
             return;
         };
-        let data_url = match canvas.to_data_url() {
+        // 写真は情報量が多くPNGだと巨大化しやすいためJPEGで保存する
+        let quality = JsValue::from_f64(0.9);
+        let data_url = match canvas
+            .to_data_url_with_type_and_encoder_options("image/jpeg", &quality)
+        {
             Ok(s) => s,
             Err(_) => {
                 set_status.set("画像の書き出しに失敗しました".to_string());
@@ -738,7 +752,20 @@ pub fn SharedCanvas() -> impl IntoView {
                 </Show>
             </div>
 
-            <p>{move || status.get()}</p>
+            <Show when=move || !status.get().is_empty()>
+                <p
+                    class="status-message"
+                    class:status-error=move || {
+                        let s = status.get();
+                        s.contains("失敗")
+                            || s.contains("エラー")
+                            || s.contains("error")
+                            || s.contains("できません")
+                            || s.contains("大きすぎ")
+                            || s.contains("達しました")
+                    }
+                >{move || status.get()}</p>
+            </Show>
         </div>
     }
 }
