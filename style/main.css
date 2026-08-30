@@ -214,9 +214,12 @@ canvas {
   border-radius: 10px;
   box-shadow: var(--shadow);
   background: #fafafa;
-  -webkit-overflow-scrolling: touch;
   flex-shrink: 0;
   transition: transform 0.2s ease;
+  /* 移動は矢印ボタンで行うため、指でのスクロールは無効化する。
+     iOSではスクロール可能な親要素がタッチをJSより先に横取りし、
+     子canvasのtouch-action指定が効かなくなることがあるため。 */
+  touch-action: none;
 }
 
 .text-popup {
