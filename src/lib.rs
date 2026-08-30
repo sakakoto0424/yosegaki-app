@@ -96,7 +96,7 @@ async fn fetch(
 ) -> worker::Result<axum::http::Response<axum::body::Body>> {
     use std::sync::Arc;
 
-    use axum::{routing::get, Extension, Router};
+    use axum::{extract::DefaultBodyLimit, routing::get, Extension, Router};
     use leptos::prelude::*;
     use leptos_axum::{generate_route_list, LeptosRoutes};
     use tower_service::Service;
@@ -115,6 +115,10 @@ async fn fetch(
             move || shell(leptos_options.clone())
         })
         .with_state(leptos_options)
+        // Axumのデフォルト上限(2MB)だと、手書きキャンバス+写真をbase64化した
+        // リクエストがすぐ超えてしまうため引き上げる(MAX_IMAGE_BYTESの6MB分を
+        // base64化+αで包含できるよう余裕を持たせる)
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024))
         .layer(axum::middleware::from_fn(basic_auth))
         .layer(Extension(Arc::new(env))); // <- Allow leptos server functions to access Worker stuff (must be outermost so basic_auth can read it)
 

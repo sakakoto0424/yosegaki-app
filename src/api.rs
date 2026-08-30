@@ -2,7 +2,7 @@ use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
 // --- 無料枠を守るための上限(リミッター) ---
-const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024; // 3MB(共有キャンバスは書き足すほど大きくなるため)
+const MAX_IMAGE_BYTES: usize = 6 * 1024 * 1024; // 6MB(写真を貼ると増えやすいため)
 const MAX_CONTRIBUTIONS_PER_THEME: i64 = 500;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
