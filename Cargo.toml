@@ -37,6 +37,10 @@ web-sys = { version = "0.3", features = [
   "DomRect",
   "ImageData",
   "TextMetrics",
+  "HtmlInputElement",
+  "File",
+  "FileList",
+  "Url",
 ] }
 worker = { version = "0.8", features = ["http", "axum", "d1"], optional = true }
 

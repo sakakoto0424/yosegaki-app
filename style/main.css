@@ -231,6 +231,38 @@ canvas {
   z-index: 10;
 }
 
+.color-palette {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.color-swatch {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+}
+
+.color-swatch.selected {
+  border-color: var(--color-text);
+  box-shadow: 0 0 0 2px var(--color-surface), 0 0 0 4px var(--color-text);
+}
+
+.scale-label {
+  gap: 6px;
+}
+
+.photo-preview {
+  position: absolute;
+  opacity: 0.85;
+  border: 2px dashed var(--color-accent);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  z-index: 9;
+}
+
 .text-popup input {
   padding: 6px 10px;
 }

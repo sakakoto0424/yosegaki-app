@@ -43,7 +43,21 @@ fn unrotate_vector(dx: i32, dy: i32, rotation_deg: i32) -> (i32, i32) {
 enum Tool {
     Pen,
     Text,
+    Photo,
 }
+
+/// ペン・文字で選べる色のパレット(名前, カラーコード)
+const COLORS: [(&str, &str); 9] = [
+    ("黒", "#222222"),
+    ("赤", "#e6432a"),
+    ("オレンジ", "#f2994a"),
+    ("黄", "#f2c94c"),
+    ("緑", "#27ae60"),
+    ("青", "#2f80ed"),
+    ("紫", "#9b51e0"),
+    ("ピンク", "#eb5b9d"),
+    ("茶", "#8a5a34"),
+];
 
 async fn load_image(url: String) -> Result<web_sys::HtmlImageElement, JsValue> {
     let img = web_sys::HtmlImageElement::new()?;
@@ -199,6 +213,14 @@ pub fn SharedCanvas() -> impl IntoView {
     let scroll_ref = NodeRef::<leptos::html::Div>::new();
     let is_drawing = StoredValue::new(false);
     let (rotation, set_rotation) = signal(0i32);
+    let (selected_color, set_selected_color) = signal(COLORS[0].1.to_string());
+
+    // 配置調整中の写真(画像本体とObjectURLはStoredValueで保持、位置・拡大率は反応的に扱う)
+    let pending_photo = StoredValue::<Option<(web_sys::HtmlImageElement, String)>>::new(None);
+    let (pending_photo_pos, set_pending_photo_pos) = signal::<Option<(f64, f64)>>(None);
+    let (pending_photo_size, set_pending_photo_size) = signal::<(f64, f64)>((0.0, 0.0));
+    let (pending_photo_scale, set_pending_photo_scale) = signal(1.0f64);
+    let is_dragging_photo = StoredValue::new(false);
 
     let refresh_themes = move || {
         spawn_local(async move {
@@ -287,45 +309,63 @@ pub fn SharedCanvas() -> impl IntoView {
         let Some((x, y)) = pointer_to_canvas(&ev) else {
             return;
         };
-        if tool.get_untracked() == Tool::Text {
-            set_pending_text_pos.set(Some((x, y)));
-            return;
+        match tool.get_untracked() {
+            Tool::Text => {
+                set_pending_text_pos.set(Some((x, y)));
+            }
+            Tool::Photo => {
+                if pending_photo.with_value(|p| p.is_some()) {
+                    set_pending_photo_pos.set(Some((x, y)));
+                    is_dragging_photo.set_value(true);
+                }
+            }
+            Tool::Pen => {
+                ev.prevent_default();
+                if let Some(canvas) = canvas_ref.get() {
+                    let _ = canvas.set_pointer_capture(ev.pointer_id());
+                }
+                if let Some(ctx) = get_ctx() {
+                    ctx.begin_path();
+                    ctx.move_to(x, y);
+                }
+                is_drawing.set_value(true);
+            }
         }
-        ev.prevent_default();
-        if let Some(canvas) = canvas_ref.get() {
-            let _ = canvas.set_pointer_capture(ev.pointer_id());
-        }
-        if let Some(ctx) = get_ctx() {
-            ctx.begin_path();
-            ctx.move_to(x, y);
-        }
-        is_drawing.set_value(true);
     };
 
     let on_pointer_move = move |ev: PointerEvent| {
-        if tool.get_untracked() != Tool::Pen || !is_drawing.get_value() {
-            return;
-        }
-        ev.prevent_default();
-        let Some((x, y)) = pointer_to_canvas(&ev) else {
-            return;
-        };
-        if let Some(ctx) = get_ctx() {
-            ctx.line_to(x, y);
-            ctx.set_line_width(4.0);
-            ctx.set_line_cap("round");
-            ctx.set_line_join("round");
-            ctx.set_stroke_style_str("#222222");
-            ctx.stroke();
+        match tool.get_untracked() {
+            Tool::Pen if is_drawing.get_value() => {
+                ev.prevent_default();
+                let Some((x, y)) = pointer_to_canvas(&ev) else {
+                    return;
+                };
+                if let Some(ctx) = get_ctx() {
+                    ctx.line_to(x, y);
+                    ctx.set_line_width(4.0);
+                    ctx.set_line_cap("round");
+                    ctx.set_line_join("round");
+                    ctx.set_stroke_style_str(&selected_color.get_untracked());
+                    ctx.stroke();
+                }
+            }
+            Tool::Photo if is_dragging_photo.get_value() => {
+                if let Some((x, y)) = pointer_to_canvas(&ev) {
+                    set_pending_photo_pos.set(Some((x, y)));
+                }
+            }
+            _ => {}
         }
     };
 
     let on_pointer_up = move |_ev: PointerEvent| {
         is_drawing.set_value(false);
+        is_dragging_photo.set_value(false);
     };
 
     let on_pointer_leave = move |_ev: PointerEvent| {
         is_drawing.set_value(false);
+        is_dragging_photo.set_value(false);
     };
 
     let on_place_text = move |_| {
@@ -335,7 +375,7 @@ pub fn SharedCanvas() -> impl IntoView {
         let text = text_draft.get_untracked();
         if !text.trim().is_empty() {
             if let Some(ctx) = get_ctx() {
-                ctx.set_fill_style_str("#222222");
+                ctx.set_fill_style_str(&selected_color.get_untracked());
                 ctx.set_font("20px sans-serif");
                 let _ = ctx.fill_text(&text, x, y);
             }
@@ -349,9 +389,94 @@ pub fn SharedCanvas() -> impl IntoView {
         set_text_draft.set(String::new());
     };
 
+    let clear_pending_photo = move || {
+        pending_photo.update_value(|p| {
+            if let Some((_, url)) = p.take() {
+                let _ = web_sys::Url::revoke_object_url(&url);
+            }
+        });
+        set_pending_photo_pos.set(None);
+    };
+
+    let on_photo_file_change = move |ev: leptos::ev::Event| {
+        let Some(target) = ev.target() else {
+            return;
+        };
+        let Ok(input) = target.dyn_into::<web_sys::HtmlInputElement>() else {
+            return;
+        };
+        let Some(files) = input.files() else {
+            return;
+        };
+        let Some(file) = files.get(0) else {
+            return;
+        };
+        let Ok(url) = web_sys::Url::create_object_url_with_blob(&file) else {
+            set_status.set("写真の読み込みに失敗しました".to_string());
+            return;
+        };
+        spawn_local(async move {
+            match load_image(url.clone()).await {
+                Ok(img) => {
+                    let nw = img.natural_width() as f64;
+                    let nh = img.natural_height() as f64;
+                    let max_dim = 320.0f64;
+                    let scale = if nw > 0.0 && nh > 0.0 {
+                        (max_dim / nw.max(nh)).min(1.0)
+                    } else {
+                        1.0
+                    };
+                    set_pending_photo_size.set((nw, nh));
+                    set_pending_photo_scale.set(scale);
+                    let (cx, cy) = scroll_ref
+                        .get_untracked()
+                        .map(|el| {
+                            (
+                                el.scroll_left() as f64 + VIEWPORT_WIDTH as f64 / 2.0,
+                                el.scroll_top() as f64 + VIEWPORT_HEIGHT as f64 / 2.0,
+                            )
+                        })
+                        .unwrap_or((CANVAS_WIDTH as f64 / 2.0, CANVAS_HEIGHT as f64 / 2.0));
+                    pending_photo.set_value(Some((img, url)));
+                    set_pending_photo_pos.set(Some((cx, cy)));
+                    set_status.set(String::new());
+                }
+                Err(_) => set_status.set("写真の読み込みに失敗しました".to_string()),
+            }
+        });
+    };
+
+    let on_place_photo = move |_| {
+        let Some((x, y)) = pending_photo_pos.get_untracked() else {
+            return;
+        };
+        let scale = pending_photo_scale.get_untracked();
+        let (nw, nh) = pending_photo_size.get_untracked();
+        let (w, h) = (nw * scale, nh * scale);
+        pending_photo.with_value(|p| {
+            if let Some((img, _)) = p {
+                if let Some(ctx) = get_ctx() {
+                    let _ = ctx.draw_image_with_html_image_element_and_dw_and_dh(
+                        img,
+                        x - w / 2.0,
+                        y - h / 2.0,
+                        w,
+                        h,
+                    );
+                }
+            }
+        });
+        clear_pending_photo();
+    };
+
+    let on_cancel_photo = move |_| {
+        clear_pending_photo();
+    };
+
     let on_undo = move |_| {
         set_pending_text_pos.set(None);
         set_text_draft.set(String::new());
+        clear_pending_photo();
         reload_canvas();
         set_status.set("書き途中の内容を取り消しました".to_string());
     };
@@ -471,7 +596,62 @@ pub fn SharedCanvas() -> impl IntoView {
                     disabled=move || tool.get() == Tool::Text
                     on:click=move |_| set_tool.set(Tool::Text)
                 >"文字を置く"</button>
+                <button
+                    type="button"
+                    disabled=move || tool.get() == Tool::Photo
+                    on:click=move |_| set_tool.set(Tool::Photo)
+                >"写真を貼る"</button>
             </div>
+
+            <Show when=move || tool.get() != Tool::Photo>
+                <div class="color-palette">
+                    <For
+                        each=|| COLORS
+                        key=|(_, code)| code.to_string()
+                        children=move |(name, code): (&str, &str)| {
+                            let code_owned = code.to_string();
+                            let code_for_click = code_owned.clone();
+                            view! {
+                                <button
+                                    type="button"
+                                    class="color-swatch"
+                                    class:selected=move || selected_color.get() == code_owned
+                                    style=format!("background-color: {code};")
+                                    title=name
+                                    on:click=move |_| set_selected_color.set(code_for_click.clone())
+                                ></button>
+                            }
+                        }
+                    />
+                </div>
+            </Show>
+
+            <Show when=move || tool.get() == Tool::Photo>
+                <div>
+                    <Show when=move || pending_photo_pos.get().is_none()>
+                        <input type="file" accept="image/*" on:change=on_photo_file_change />
+                    </Show>
+                    <Show when=move || pending_photo_pos.get().is_some()>
+                        <label class="scale-label">
+                            "大きさ: "
+                            <input
+                                type="range"
+                                min="0.05"
+                                max="3"
+                                step="0.05"
+                                prop:value=move || pending_photo_scale.get().to_string()
+                                on:input=move |ev| {
+                                    if let Ok(v) = event_target_value(&ev).parse::<f64>() {
+                                        set_pending_photo_scale.set(v);
+                                    }
+                                }
+                            />
+                        </label>
+                        <button type="button" on:click=on_place_photo>"配置"</button>
+                        <button type="button" on:click=on_cancel_photo>"やめる"</button>
+                    </Show>
+                </div>
+            </Show>
 
             <p class="canvas-hint">"広いキャンバスの一部だけが表示されています。矢印ボタンで移動、回転ボタンで向きを変えられます。"</p>
 
@@ -520,6 +700,29 @@ pub fn SharedCanvas() -> impl IntoView {
                                         <button type="button" on:click=on_place_text>"配置"</button>
                                         <button type="button" on:click=on_cancel_text>"やめる"</button>
                                     </div>
+                                }
+                            }}
+                        </Show>
+
+                        <Show when=move || pending_photo_pos.get().is_some()>
+                            {move || {
+                                let (x, y) = pending_photo_pos.get().unwrap_or((0.0, 0.0));
+                                let (nw, nh) = pending_photo_size.get();
+                                let scale = pending_photo_scale.get();
+                                let (w, h) = (nw * scale, nh * scale);
+                                let src = pending_photo.with_value(|p| {
+                                    p.as_ref().map(|(_, url)| url.clone()).unwrap_or_default()
+                                });
+                                view! {
+                                    <img
+                                        src=src
+                                        class="photo-preview"
+                                        style=format!(
+                                            "left: {}px; top: {}px; width: {w}px; height: {h}px;",
+                                            x - w / 2.0,
+                                            y - h / 2.0,
+                                        )
+                                    />
                                 }
                             }}
                         </Show>
